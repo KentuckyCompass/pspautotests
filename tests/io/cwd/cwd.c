@@ -25,45 +25,100 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/unistd.h>
+#include "sysmem-imports.h"
 
-void try(const char *dest)
+void list_cwd()
 {
-	char buf[MAXPATHLEN];
+	SceIoDirent file;
+	int fd;
 
-	printf("%16s --> ", dest);
-	if(chdir(dest) < 0) {
-		printf("(chdir error)\n");
-	} else {
-		printf("%s\n", getcwd(buf, MAXPATHLEN) ?: "(getcwd error)");
+	fd = sceIoDopen(".");
+	if (fd < 0)
+	{
+		printf("Failed to open \".\" with error: %X\n", fd);
+		return;
 	}
+
+	while (1) {
+		if (sceIoDread(fd, &file) <= 0) break;
+		printf(
+			//"'%s':%lld:%d:%d\n",
+			"'%s'\n",
+			file.d_name//,
+			//file.d_stat.st_size,
+			//file.d_stat.st_attr,
+			//file.d_stat.st_mode
+		);
+	}
+	sceIoDclose(fd);
+
+}
+
+static int thread3Func (SceSize args, void* argp)
+{
+	printf("\n%s\n", "Thread 3 starting, current directory:");
+	list_cwd();
+
+	printf("\n%s\n", "Thread 3 exiting");
+
+	return 0;
+}
+
+static int thread2Func (SceSize args, void* argp)
+{
+	printf("\n%s\n", "Thread 2 starting, current directory:");
+	list_cwd();
+
+	printf("\n%s\n", "Thread 2 exiting");
+
+	return 0;
+}
+
+static int thread1Func (SceSize args, void* argp)
+{
+	printf("\n%s\n", "Thread 1 changing to host0:/");
+	sceIoChdir("host0:/");
+
+	printf("\n%s\n", "Thread 1 listing current directory");
+	list_cwd();
+
+	int thread2 = sceKernelCreateThread("thread2Func", &thread2Func, 0x11, 0x10000, 0, NULL);
+	sceKernelStartThread(thread2, 0, NULL);
+
+	sceKernelDelayThread(100 * 1000);
+
+	printf("\n%s\n", "Thread 1 exiting (here's another listing)");
+	list_cwd();
+
+	//sceKernelWaitThreadEnd(thread2, NULL);
+
+	return 0;
 }
 
 int main(int argc, char *argv[])
 {
-	int n;
-	char buf[MAXPATHLEN];
-	
-	printf("Working Directory Examples\n");
-	printf("Arguments: %d\n", argc);
-	for (n = 0; n < argc; n++) {
-		printf("Argument[%d]: '%s'\n", n, argv[n]);
-	}
-	printf("Initial dir: %s\n\n", getcwd(buf, MAXPATHLEN) ?: "(error)");
+	//sceKernelSetCompiledSdkVersion606(0x6060010);
 
-	printf("%16s --> %s\n", "chdir() attempt", "resulting getcwd()");
-	printf("%16s --> %s\n", "---------------", "------------------");
-	try("");		   /* empty string                */
-	try("hello");		   /* nonexistent path            */
-	try("..");		   /* parent dir                  */
-	try("../SAVEDATA");	   /* parent dir and subdir       */
-	try("../..");		   /* multiple parents            */
-	try(".");		   /* current dir                 */
-	try("./././//PSP");        /* current dirs, extra slashes */
-	try("/PSP/./GAME");	   /* absolute with no drive      */
-	try("/");                  /* root with no drive          */
-	try("ms0:/PSP/GAME");      /* absolute with drive         */
-	try("flash0:/");           /* different drive             */
-	try("ms0:/PSP/../PSP/");   /* mixed                       */
+	int thread1 = sceKernelCreateThread("thread1Func", &thread1Func, 0x12, 0x10000, 0, NULL);
+
+	printf("\n%s\n", "main() listing current directory");
+	list_cwd();
+
+	sceKernelStartThread(thread1, 0, NULL);
+
+	// Give Thread1 a chance to change current working directory
+	sceKernelDelayThread(25 * 1000);
+
+	printf("\n%s\n", "main() listing current directory");
+	list_cwd();
+
+	int thread3 = sceKernelCreateThread("thread3Func", &thread3Func, 0x12, 0x10000, 0, NULL);
+	sceKernelStartThread(thread3, 0, NULL);
+
+	printf("\n%s\n", "main() is finished - now waiting for threads");
+	
+	sceKernelWaitThreadEnd(thread3, NULL);
+	sceKernelWaitThreadEnd(thread1, NULL);
 
 	printf("\nAll done!\n");
 

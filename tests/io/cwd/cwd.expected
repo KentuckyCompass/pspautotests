@@ -1,21 +1,80 @@
-Working Directory Examples
-Arguments: 1
-Argument[0]: 'ms0:/PSP/GAME/CWD/EBOOT.PBP'
-Initial dir: ms0:/PSP/GAME/CWD
 
- chdir() attempt --> resulting getcwd()
- --------------- --> ------------------
-                 --> ms0:/PSP/GAME/CWD
-           hello --> (chdir error)
-              .. --> ms0:/PSP/GAME
-     ../SAVEDATA --> ms0:/PSP/SAVEDATA
-           ../.. --> ms0:
-               . --> ms0:
-     ./././//PSP --> ms0:/PSP
-     /PSP/./GAME --> ms0:/PSP/GAME
-               / --> ms0:
-   ms0:/PSP/GAME --> ms0:/PSP/GAME
-        flash0:/ --> (chdir error)
-ms0:/PSP/../PSP/ --> ms0:/PSP
+main() listing current directory
+'.'
+'..'
+'EBOOT.PBP'
+'Makefile'
+'PARAM.SFO'
+'cwd.c'
+'cwd.elf'
+'cwd.expected'
+'cwd.expected2.txt'
+'cwd.o'
+'cwd.prx'
+
+Thread 1 changing to host0:/
+
+Thread 1 listing current directory
+'.'
+'..'
+'.git'
+'.gitignore'
+'.pspsh.hist'
+'LICENSE.txt'
+'README.md'
+'__testerror.txt'
+'__testoutput.txt'
+'common'
+'demos'
+'demos_ex'
+'gentest.py'
+'input'
+'tests'
+'utils'
+'vcproj'
+
+Thread 2 starting, current directory:
+Failed to open "." with error: 8002032C
+
+Thread 2 exiting
+
+main() listing current directory
+'.'
+'..'
+'EBOOT.PBP'
+'Makefile'
+'PARAM.SFO'
+'cwd.c'
+'cwd.elf'
+'cwd.expected'
+'cwd.expected2.txt'
+'cwd.o'
+'cwd.prx'
+
+Thread 3 starting, current directory:
+Failed to open "." with error: 8002032C
+
+Thread 3 exiting
+
+main() is finished - now waiting for threads
+
+Thread 1 exiting (here's another listing)
+'.'
+'..'
+'.git'
+'.gitignore'
+'.pspsh.hist'
+'LICENSE.txt'
+'README.md'
+'__testerror.txt'
+'__testoutput.txt'
+'common'
+'demos'
+'demos_ex'
+'gentest.py'
+'input'
+'tests'
+'utils'
+'vcproj'
 
 All done!
