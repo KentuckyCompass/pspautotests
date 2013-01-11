@@ -145,6 +145,7 @@ class Command(object):
     def target():
       self.process = subprocess.Popen(self.cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
       self.output, _ = self.process.communicate()
+      self.output = self.output.decode("utf-8")
 
     thread = threading.Thread(target=target)
     thread.start()
@@ -155,7 +156,7 @@ class Command(object):
       try:
         self.process.terminate()
       except WindowsError:
-        print "Could not terminate process"
+        print("Could not terminate process")
       thread.join()
 
 def wait_until(predicate, timeout, interval):
@@ -172,7 +173,7 @@ def pspsh_is_ready():
 
 def init():
   if not os.path.exists(TEST_ROOT + "../common/libcommon.a"):
-    print "Please install the pspsdk and run make in common/"
+    print("Please install the pspsdk and run make in common/")
     if not ("-k" in sys.argv or "--keep" in sys.argv):
       sys.exit(1)
 
@@ -203,41 +204,41 @@ def gen_test(test, args):
   prx_path = TEST_ROOT + test + ".prx"
 
   if not os.path.exists(prx_path):
-    print "You must compile the test into a PRX first (" + prx_path + ")"
+    print("You must compile the test into a PRX first (" + prx_path + ")")
     return False
 
   # Wait for the PSP to reconnect after a previous test.
   if not pspsh_is_ready():
-    print "Waiting for PSP to connect..."
+    print("Waiting for PSP to connect...")
 
     success = wait_until(pspsh_is_ready, RECONNECT_TIMEOUT, 0.2)
 
     # No good, it never came back.
     if not success:
-      print "Please make sure the PSP is connected"
-      print "On Windows, the usb driver must be installed"
+      print("Please make sure the PSP is connected")
+      print("On Windows, the usb driver must be installed")
       return False
 
   # Okay, time to run the command.
   c = Command([PSPSH, "-p", str(PORT), "-e", prx_path + " " + " ".join(args)])
   c.run(TIMEOUT)
   if not re.match(r"^Load/Start [^ ]+ UID: 0x[0-9A-F]+ Name: TESTMODULE\s*$", c.output):
-    print c.output
+    print(c.output)
 
   # PSPSH returns right away, though, so do the timeout here.
   wait_until(lambda: os.path.exists(FINISHFILE), TIMEOUT, 0.1)
 
   if not os.path.exists(FINISHFILE):
-    print "ERROR: Test timed out after %d seconds" % (TIMEOUT)
+    print("ERROR: Test timed out after %d seconds" % (TIMEOUT))
 
     # Reset the test, it's probably dead.
     os.system("%s -p %i -e reset" % (PSPSH, PORT))
   elif os.path.exists(OUTFILE2) and os.path.getsize(OUTFILE2) > 0:
-    print "ERROR: Script produced stderr output"
+    print("ERROR: Script produced stderr output")
   elif os.path.exists(OUTFILE) and os.path.getsize(OUTFILE) > 0:
     return open(OUTFILE, "rt").read()
   else:
-    print "ERROR: No or empty " + OUTFILE + " was written, can't write .expected"
+    print("ERROR: No or empty " + OUTFILE + " was written, can't write .expected")
 
   return False
 
@@ -254,7 +255,7 @@ def gen_test_expected(test, args):
       open(expected_path, "wt").write(result)
     else:
       shutil.copyfile(OUTFILE, expected_path)
-    print "Expected file written: " + expected_path
+    print("Expected file written: " + expected_path)
     return True
 
   return False
@@ -270,7 +271,7 @@ def gen_test_all_versions(test, args):
     result = gen_test(test, all_versions[name] + args)
 
     if result != standard_result:
-      print "*** %s got a different result using %s" % (test, " ".join(all_versions[name]))
+      print("*** %s got a different result using %s" % (test, " ".join(all_versions[name])))
       diff = True
 
   return diff
@@ -289,27 +290,27 @@ def main():
     tests = tests_to_generate
 
   if "-h" in args or "--help" in args:
-    print "Usage: %s [options] cpu/icache/icache rtc/rtc...\n" % (os.path.basename(sys.argv[0]))
-    print "Tests should be found under %s and omit the .prx extension." % (TEST_ROOT)
-    print "Automatically runs make in the test by default.\n"
-    print "Options:"
-    print "  -r, --rebuild         run make rebuild for each test"
-    print "  -k, --keep            do not run make before tests"
-    print "      --sdkver=VER      use sceKernelSetCompiledSdkVersion(VER)"
-    print "      --sdkver-func=### use sceKernelSetCompiledSdkVersion###(VER)"
-    print "  -a, --all-versions    run the test for all known versions"
+    print("Usage: %s [options] cpu/icache/icache rtc/rtc...\n" % (os.path.basename(sys.argv[0])))
+    print("Tests should be found under %s and omit the .prx extension." % (TEST_ROOT))
+    print("Automatically runs make in the test by default.\n")
+    print("Options:")
+    print("  -r, --rebuild         run make rebuild for each test")
+    print("  -k, --keep            do not run make before tests")
+    print("      --sdkver=VER      use sceKernelSetCompiledSdkVersion(VER)")
+    print("      --sdkver-func=### use sceKernelSetCompiledSdkVersion###(VER)")
+    print("  -a, --all-versions    run the test for all known versions")
     return
 
   if "-a" in args or "--all-versions" in args:
     warnings = []
     for test in tests:
-	  if gen_test_all_versions(test, args):
-	    warnings.append(test)
+      if gen_test_all_versions(test, args):
+        warnings.append(test)
 
     if len(warnings):
-      print "\nDifferences:"
+      print("\nDifferences:")
       for test in warnings:
-        print "  " + test
+        print("  " + test)
   else:
     for test in tests:
       gen_test_expected(test, args)
