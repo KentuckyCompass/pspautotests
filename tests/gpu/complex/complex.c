@@ -68,8 +68,9 @@ int xMain()
 	sceGuDisable(GU_LIGHTING);
 	sceGuDisable(GU_BLEND);
 	bg3_draw_tex(logo, 0, 0);
+	sceKernelDcacheWritebackInvalidateAll();
 	xGuFrameEnd();
 
-	sceKernelExitGame();
+	emulatorEmitScreenshot();
     return 0;
 }

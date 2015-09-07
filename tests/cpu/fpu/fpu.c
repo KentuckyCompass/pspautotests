@@ -31,26 +31,34 @@ int __attribute__((noinline)) cvtws(float x, int rm) {
 	return result;
 }
 
-/* these must be VFPU
-const char *cmpNames[16] = {
-  "FL",
-  "EQ",
-  "LT",
-  "LE",
-  "TR",
-  "NE",
-  "GE",
-  "GT",
-  "EZ",
-  "EN",
-  "EI", 
-  "ES",
-  "NZ",
-  "NN",
-  "NI",
-  "NS",
-};
-*/
+int __attribute__((noinline)) truncws(float x) {
+	float resultFloat;
+	asm volatile("trunc.w.s %0, %1" : "=f"(resultFloat) : "f"(x));
+	int result = *((int *) &resultFloat);
+	return result;
+}
+
+int __attribute__((noinline)) floorws(float x) {
+	float resultFloat;
+	asm volatile("floor.w.s %0, %1" : "=f"(resultFloat) : "f"(x));
+	int result = *((int *) &resultFloat);
+	return result;
+}
+
+int __attribute__((noinline)) ceilws(float x) {
+	float resultFloat;
+	asm volatile("ceil.w.s %0, %1" : "=f"(resultFloat) : "f"(x));
+	int result = *((int *) &resultFloat);
+	return result;
+}
+
+void testRoundingMul(const char *title, float a1, float a2, int rm) {
+	float result;
+	asm volatile("ctc1 %0, $31" : : "r"(rm));
+	asm volatile("mul.s %0, %1, %2" : "=f"(result) : "f"(a1), "f"(a2));
+
+	printf("mul.s %f * %f, %s = %f\n", a1, a2, title, result);
+}
 
 const char *cmpNames[16] = {
   "f",
@@ -125,7 +133,14 @@ void testCompare(float a, float b) {
   }
 }
 
-float floatRelevantValues[] = {0, 1, -1, 1.5, -1.5, 1.6, -1.6, 1.4, -1.4, 2.0, -2.0, 4.0, INFINITY, -INFINITY, NAN, -NAN };
+float floatRelevantValues[] = {
+	0, 1, -1, 1.5,
+	-1.5, 1.6, -1.6, 1.4,
+	-1.4, 2.0, -2.0, 4.0, 
+	-10000000.4, 20000000.0, -20000.5, 20000.6, 
+	INFINITY, -INFINITY, NAN, -NAN
+};
+
 #define lengthof(v) (sizeof(v) / sizeof((v)[0]))
 
 int isOperandOkay(const char *name, float a1) {
@@ -207,9 +222,6 @@ inline void runOperand(const char *name, float (*func)(float)) {
 	printf("\n\n");
 }
 
-
-#define CHECK_OP(op, expected) { float f = 0.0; f = op; printf("%s\n%f\n", #op " == " #expected, f);}
-
 #define OUTPUT_2(OP) { runOperands(#OP, op_##OP); }
 #define OUTPUT_1(OP) { runOperand(#OP, op_##OP); }
 
@@ -227,6 +239,15 @@ DEFINE_OP1(sqrt)
 DEFINE_OP1(abs)
 DEFINE_OP1(neg)
 
+void testFlushToZero(int enable) {
+	asm volatile("ctc1 %0, $31" : : "r"(enable << 24));
+	union {uint32_t i; float f;} small = {.i = 0x00800000};
+	float result;
+	asm volatile("mul.s %0, %1, %2" : "=f"(result) : "f"(small.f), "f"(0.5f));
+	printf("mul.s 1.1754944e-38, 0.5 (FS=%d) => %g\n", enable, result);
+	asm volatile("ctc1 $0, $31");
+}
+
 int main(int argc, char *argv[]) {
 	OUTPUT_2(add);
 	OUTPUT_2(sub);
@@ -236,34 +257,45 @@ int main(int argc, char *argv[]) {
 	OUTPUT_1(abs);
 	OUTPUT_1(neg);
 
-	CHECK_OP(cvtws(1.1, RINT_0), 1);
-	CHECK_OP(cvtws(1.1, CAST_1), 1);
-	CHECK_OP(cvtws(1.1, CEIL_2), 2);
-	CHECK_OP(cvtws(1.1, FLOOR_3), 1);
+	const float values[28] = {
+		0.0f, 0.1f, 0.5f, 0.9f, 1.0f, 1.1f, 1.5f, 1.9f, 2.0f, 2.5f, 3.5f, 1000.0f, INFINITY, NAN,
+		-0.0f, -0.1f, -0.5f, -0.9f, -1.0f, -1.1f, -1.5f, -1.9f, -2.0f, -2.5f, -3.5f, -1000.0f, -INFINITY, -NAN,
+	};
 
-	CHECK_OP(cvtws(-1.1, RINT_0), -1);
-	CHECK_OP(cvtws(-1.1, CAST_1), -1);
-	CHECK_OP(cvtws(-1.1, CEIL_2), -1);
-	CHECK_OP(cvtws(-1.1, FLOOR_3), -2);
+#define NUM_VALUES 28
+	{
+		int i, j;
+		for (i = 0; i < NUM_VALUES; i++) {
+			float value = values[i];
+			printf("cvt.w.s %f, RINT_0: %i\n", value, cvtws(value, RINT_0));
+			printf("cvt.w.s %f, CAST_1: %i\n", value, cvtws(value, CAST_1));
+			printf("cvt.w.s %f, CEIL_2: %i\n", value, cvtws(value, CEIL_2));
+			printf("cvt.w.s %f, FLOOR_3: %i\n", value, cvtws(value, FLOOR_3));
+			printf("trunc.w.s %f: %i\n", value, truncws(value));
+			printf("floor.w.s %f: %i\n", value, floorws(value));
+			printf("ceil.w.s %f: %i\n", value, ceilws(value));
+		}
+	}
 
-	CHECK_OP(cvtws(1.9, RINT_0), 2);
-	CHECK_OP(cvtws(1.9, CAST_1), 1);
-	CHECK_OP(cvtws(1.9, CEIL_2), 2);
-	CHECK_OP(cvtws(1.9, FLOOR_3), 1);
-
-	CHECK_OP(cvtws(1.5, RINT_0), 2);
-	CHECK_OP(cvtws(2.5, RINT_0), 2);
-	CHECK_OP(cvtws(3.5, RINT_0), 2);
-	CHECK_OP(cvtws(4.5, RINT_0), 2);
-	CHECK_OP(cvtws(1.5, CAST_1), 1);
-	CHECK_OP(cvtws(2.5, CAST_1), 1);
-	CHECK_OP(cvtws(1.5, CEIL_2), 2);
-	CHECK_OP(cvtws(1.5, FLOOR_3), 1);
+	printf("\n\nRounding modes with multiply:\n");
+	testRoundingMul("RINT_0", 0.2965576648712158203125f, 62.0f, RINT_0);
+	testRoundingMul("CAST_1", 0.2965576648712158203125f, 62.0f, CAST_1);
+	testRoundingMul("CEIL_2", 0.2965576648712158203125f, 62.0f, CEIL_2);
+	testRoundingMul("FLOOR_3", 0.2965576648712158203125f, 62.0f, FLOOR_3);
+	printf("\n");
 
 	testCompare(0.0f, 0.0f);
 	testCompare(1.0f, 1.0f);
 	testCompare(1.0f, 2.0f);
 	testCompare(1.0f, -2.0f);
+	testCompare(NAN, 1.0f);
+	testCompare(INFINITY, 1.0f);
+	testCompare(1.0f, NAN);
+	testCompare(1.0f, INFINITY);
+
+	printf("\n\nFlush-to-zero mode (FCR31.FS):\n");
+	testFlushToZero(1);
+	testFlushToZero(0);
 
 	return 0;
 }

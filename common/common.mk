@@ -5,8 +5,6 @@
 # TARGETS=mytest
 # include ../../path/to/common/common.mk
 
-COMMON_DIR := $(dir $(lastword $(MAKEFILE_LIST)))
-
 BUILD_PRX = 1
 USE_PSPSDK_LIBC = 1
 PSP_FW_VERSION = 500
@@ -28,11 +26,18 @@ LDFLAGS = -G0
 endif
 
 ifndef LIBS
+ifdef COMMON_KERNEL
+LIBS = -lpspgu -lpsprtc -lpspctrl -lpspmath -lcommon_kernel -lc -lm
+else
 LIBS = -lpspgu -lpsprtc -lpspctrl -lpspmath -lcommon -lc -lm
+endif
+endif
+ifdef EXTRA_LIBS
+LIBS := $(LIBS) $(EXTRA_LIBS)
 endif
 
 TARGET = $(firstword $(TARGETS))
-OBJS = $(firstword $(TARGETS)).o
+OBJS = $(firstword $(TARGETS)).o $(EXTRA_OBJS)
 
 PSPSDK = $(shell psp-config --pspsdk-path)
 include $(PSPSDK)/lib/build.mak
@@ -43,6 +48,9 @@ include $(PSPSDK)/lib/build.mak
 
 %.prx: %.elf
 	psp-prxgen $< $@
+
+%.o: %.S
+	$(AS) $(ASFLAGS) -c -o $@ $<
 
 all: $(TARGETS:=.prx)
 clean: EXTRA_TARGETS:=$(EXTRA_TARGETS) $(TARGETS:=.prx)

@@ -1,8 +1,95 @@
 #ifndef __SASCORE_H
 #define __SASCORE_H
 
+struct SasHeader
+{
+	int unk1End; // always 00180990?  0x00180000 + 0x10 + 32 * 76.
+	char revType; // default -1
+	char unk; // default 0x0b -> changes to 0 after first sceSasCore...
+	char revDelay; // default 0
+	char revFeedback; // default 0
+	char grainFactor; // 0x40=0x2 - 0x800=0x40
+	char outMode; // stereo/mono
+	char dryWet; // 1 = dry, 2 = wet, 3 = both, 0 = neither, default = 1
+	char busyFlag; // default = 0
+	u16 revVolLeft; // default = 0
+	u16 revVolRight; // default = 0
+	int unk2; // default = -1
+};
+
+typedef enum
+{
+	SAS_VOICE_TYPE_NONE = 0x00,
+	SAS_VOICE_TYPE_VAG = 0x01,
+	SAS_VOICE_TYPE_NOISE = 0x02,
+	SAS_VOICE_TYPE_TRIANGLE = 0x03,
+	SAS_VOICE_TYPE_STEEP = 0x04,
+	SAS_VOICE_TYPE_PCM = 0x05,
+	// TODO: Not sure.
+	SAS_VOICE_TYPE_MASK = 0x0F,
+
+	SAS_VOICE_FLAG_PAUSED = 0x10,
+} SasVoiceFlags;
+
+struct SasVoice
+{
+	union // default 0x00000000 0x00000000
+	{
+		u32 unkNone[2];
+		struct
+		{
+			void *vag;
+			u32 vagLength;
+		};
+		int unkNoise[2];
+		struct
+		{
+			void *pcm;
+			short pcmLength; // actual length - 1
+			short pcmLoops;
+		};
+		struct
+		{
+			short triangleOrSteep; // 0=1, 1=441, 2=441*2... max 100=441*100
+			short unkTriangle[3];
+		};
+		// TODO: atrac3+...
+	};
+	u8 type; // 0x10 == pause, 0x1 = vag, 0x2 = noise, 0x3 = trangle, 0x4 = steep, 0x5 = pcm, default 0
+	u8 loop; // 1 = loop
+	short pitch; // default = 0x1000
+	short leftVolume; // default = 0x1000
+	short rightVolume; // default = 0x1000
+	short effectLeftVolume; // default = 0x1000
+	short effectRightVolume; // default = 0x1000
+	int unk1; // 0x00180000 + 0x10 + voiceNum * 76.  Repeats for second set of voices.
+	int attackRate; // default 0
+	int decayRate; // default 0
+	int sustainRate; // default 0
+	int releaseRate; // default 0
+	int sustainLevel; // default 0x100
+	char attackType; // default 0
+	char decayType; // default 1
+	char sustainType; // default 0
+	char releaseType; // default 1
+	u16 unk2; // ?? default=0707, likely ADSR related?
+	char unk3; // more flags? 00?
+	char phase; // -1 default, -2 to set voice on, 0=attack, 1=decay
+	int height;
+};
+
+struct SasFooter
+{
+	int unk1; // default = -1
+	int unk2; // default 0, changes to 1 after first sceSasCore().
+	short unk3; // default 0
+	short unk4; // default 0
+};
+
 typedef struct {
-	unsigned int data[512];
+	struct SasHeader header;
+	struct SasVoice voices[64];
+	struct SasFooter footer;
 } SasCore;
 
 #define PSP_SAS_ERROR_ADDRESS        0x80420005
@@ -62,12 +149,47 @@ typedef struct {
 #define PSP_SAS_OUTPUTMODE_STEREO       0
 #define PSP_SAS_OUTPUTMODE_MULTICHANNEL 1
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 int __sceSasInit(SasCore* sasCore, int grainSamples, int maxVoices, int outMode, int sampleRate);
-int __sceSasSetOutputmode(SasCore* sasCore, int outputMode);
-int __sceSasSetVoice(SasCore* sasCore, int voice, char* vagPointer, int vagSize, int loopCount);
-int __sceSasSetPitch(SasCore* sasCore, int voice, int pitch);
-int __sceSasSetVolume(SasCore* sasCore, int voice, int leftVolume, int rightVolume);
-int __sceSasSetKeyOn(SasCore* sasCore, int voice);
-unsigned int __sceSasCore(SasCore* sasCore, void* SasOut);
+int __sceSasSetADSR(SasCore *sasCore, int voice, int flag, int attack, int decay, int sustain, int release);
+int __sceSasRevParam(SasCore *sasCore, int delay, int feedback);
+int __sceSasGetPauseFlag(SasCore *sasCore);
+int __sceSasRevType(SasCore *sasCore, int type);
+int __sceSasSetVolume(SasCore *sasCore, int voice, int leftVolume, int rightVolume, int effectLeftVolume, int effectRightVolume);
+int __sceSasCoreWithMix(SasCore *sasCore, void *sasInOut, int leftVol, int rightVol);
+int __sceSasSetSL(SasCore *sasCore, int voice, int level);
+int __sceSasGetEndFlag(SasCore *sasCore);
+int __sceSasGetEnvelopeHeight(SasCore *sasCore, int voice);
+int __sceSasSetKeyOn(SasCore *sasCore, int voice);
+int __sceSasSetPause(SasCore *sasCore, int voice_bit, int setPause);
+int __sceSasSetVoice(SasCore *sasCore, int voice, void *vagPointer, int vagSize, int loopCount);
+int __sceSasSetADSRmode(SasCore *sasCore, int voice, int flag, int attackType, int decayType, int sustainType, int releaseType);
+int __sceSasSetKeyOff(SasCore *sasCore, int voice);
+int __sceSasSetTrianglarWave(SasCore *sasCore, int voice, int unk);
+int __sceSasCore(SasCore *sasCore, void *sasOut);
+int __sceSasSetPitch(SasCore *sasCore, int voice, int pitch);
+int __sceSasSetNoise(SasCore *sasCore, int voice, int freq);
+int __sceSasGetGrain(SasCore *sasCore);
+int __sceSasSetSimpleADSR(SasCore *sasCore, int voice, int ADSREnv1, int ADSREnv2);
+int __sceSasSetGrain(SasCore *sasCore, int grain);
+int __sceSasRevEVOL(SasCore *sasCore, int leftVol, int rightVol);
+int __sceSasSetSteepWave(SasCore *sasCore, int voice, int unk);
+int __sceSasGetOutputmode(SasCore *sasCore);
+int __sceSasSetOutputmode(SasCore *sasCore, int outputMode);
+int __sceSasRevVON(SasCore *sasCore, int dry, int wet);
+int __sceSasGetAllEnvelopeHeights(SasCore *sasCore, int *heights);
+int __sceSasSetVoicePCM(SasCore *sasCore, int voice, void *pcm, int size, int loop);
+
+// TODO: Context struct
+int __sceSasSetVoiceATRAC3(SasCore *sasCore, int voice, void *atrac3Context);
+int __sceSasConcatenateATRAC3(SasCore *sasCore, int voice, void *data, int size);
+int __sceSasUnsetATRAC3(SasCore *sasCore, int voice);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

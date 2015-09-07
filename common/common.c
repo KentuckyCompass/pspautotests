@@ -1,5 +1,7 @@
+#include <malloc.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <assert.h>
 #include <pspdebug.h>
 #include <pspthreadman.h>
@@ -14,6 +16,7 @@
 #include <string.h>
 #include <sys/lock.h>
 #include <sys/fcntl.h>
+
 //#include "local.h"
 
 #include "sysmem-imports.h"
@@ -41,9 +44,13 @@ enum PspModuleInfoAttr
 };
 */
 
+#ifdef COMMON_KERNEL
+PSP_MODULE_INFO("TESTMODULE", PSP_MODULE_KERNEL, 1, 0);
+PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_VFPU);
+#else
 PSP_MODULE_INFO("TESTMODULE", PSP_MODULE_USER, 1, 0);
 PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER | PSP_THREAD_ATTR_VFPU);
-//PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER);
+#endif
 
 #define EMULATOR_DEVCTL__GET_HAS_DISPLAY 0x00000001
 #define EMULATOR_DEVCTL__SEND_OUTPUT     0x00000002
@@ -52,6 +59,8 @@ PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER | PSP_THREAD_ATTR_VFPU);
 #define EMULATOR_DEVCTL__EMIT_SCREENSHOT 0x00000020
 
 unsigned int RUNNING_ON_EMULATOR = 0;
+unsigned int CHECKPOINT_ENABLE_TIME = 0;
+unsigned int CHECKPOINT_OUTPUT_DIRECT = 0;
 unsigned int HAS_DISPLAY = 1;
 
 // 21 MB to give space for thread stacks and etc.
@@ -61,6 +70,77 @@ extern int test_main(int argc, char *argv[]);
 
 FILE stdout_back = {NULL};
 //int KprintfFd = 0;
+
+char schedfBuffer[65536];
+unsigned int schedfBufferPos = 0;
+
+void schedf(const char *format, ...) {
+	va_list args;
+	va_start(args, format);
+	if (CHECKPOINT_OUTPUT_DIRECT) {
+		// This is easier to debug in the emulator, but printf() reschedules on the real PSP.
+		vprintf(format, args);
+	} else {
+		schedfBufferPos += vsprintf(schedfBuffer + schedfBufferPos, format, args);
+	}
+	va_end(args);
+}
+
+void flushschedf() {
+	printf("%s", schedfBuffer);
+	schedfBuffer[0] = '\0';
+	schedfBufferPos = 0;
+}
+
+SceUID reschedThread;
+volatile int didResched = 0;
+int reschedFunc(SceSize argc, void *argp) {
+	didResched = 1;
+	return 0;
+}
+
+u64 lastCheckpoint = 0;
+void checkpoint(const char *format, ...) {
+	u64 currentCheckpoint = sceKernelGetSystemTimeWide();
+	if (CHECKPOINT_ENABLE_TIME) {
+		schedf("[%s/%lld] ", didResched ? "r" : "x", currentCheckpoint - lastCheckpoint);
+	} else {
+		schedf("[%s] ", didResched ? "r" : "x");
+	}
+
+	sceKernelTerminateThread(reschedThread);
+
+	if (format != NULL) {
+		va_list args;
+		va_start(args, format);
+		if (CHECKPOINT_OUTPUT_DIRECT) {
+			// This is easier to debug in the emulator, but printf() reschedules on the real PSP.
+			vprintf(format, args);
+		} else {
+			schedfBufferPos += vsprintf(schedfBuffer + schedfBufferPos, format, args);
+		}
+		va_end(args);
+	}
+
+	didResched = 0;
+	sceKernelStartThread(reschedThread, 0, NULL);
+
+	if (format != NULL) {
+		schedf("\n");
+	}
+	
+	lastCheckpoint = currentCheckpoint;
+}
+
+void checkpointNext(const char *title) {
+	if (schedfBufferPos != 0) {
+		schedf("\n");
+	}
+	flushschedf();
+	didResched = 0;
+	if (title != NULL)
+		checkpoint(title);
+}
 
 static int writeStdoutHook(struct _reent *ptr, void *cookie, const char *buf, int buf_len) {
 	char temp[1024 + 1];
@@ -87,7 +167,7 @@ static int writeStdoutHook(struct _reent *ptr, void *cookie, const char *buf, in
 	}
 }
 
-typedef int (*SdkVerFunc)(u32 ver);
+typedef int (*SdkVerFunc)(int ver);
 typedef struct SdkVerFuncTable {
 	u32 id;
 	SdkVerFunc func;
@@ -162,9 +242,13 @@ void test_begin() {
 	setvbuf(stderr, NULL, _IONBF, 0);
 	
 	setbuf(stderr, NULL);
+
+	reschedThread = sceKernelCreateThread("resched", &reschedFunc, sceKernelGetThreadCurrentPriority(), 0x1000, 0, NULL);
 }
 
 void test_end() {
+	flushschedf();
+
 	fflush(stdout);
 	fflush(stderr);
 	
@@ -252,8 +336,84 @@ unsigned char bmpHeader[54] = {
 };
 
 
-uint extractBits(uint value, int offset, int size) {
+static inline uint extractBits(uint value, int offset, int size) {
 	return (value >> offset) & ((1 << size) - 1);
+}
+
+static inline uint extractExpand1Bits(uint value, int offset) {
+	uint extracted = (value >> offset) & 1;
+	return extracted ? 0xFF : 0;
+}
+
+static inline uint extractExpand4Bits(uint value, int offset) {
+	uint extracted = (value >> offset) & ((1 << 4) - 1);
+	return (extracted << 4) | (extracted >> 0);
+}
+
+static inline uint extractExpand5Bits(uint value, int offset) {
+	uint extracted = (value >> offset) & ((1 << 5) - 1);
+	return (extracted << 3) | (extracted >> 2);
+}
+
+static inline uint extractExpand6Bits(uint value, int offset) {
+	uint extracted = (value >> offset) & ((1 << 6) - 1);
+	return (extracted << 2) | (extracted >> 4);
+}
+
+static void rgab8888_to_bgra8888(uint *dst, const uint *src, int num) {
+	int i;
+	uint c;
+	uint r, g, b, a;
+	for (i = 0; i < num; i++) {
+		c = src[i];
+		r = extractBits(c,  0, 8);
+		g = extractBits(c,  8, 8);
+		b = extractBits(c, 16, 8);
+		a = extractBits(c, 24, 8);
+		dst[i] = (b << 0) | (g << 8) | (r << 16) | (a << 24);
+	}
+}
+
+static void rgab4444_to_bgra8888(uint *dst, const ushort *src, int num) {
+	int i;
+	uint c;
+	uint r, g, b, a;
+	for (i = 0; i < num; i++) {
+		c = src[i];
+		r = extractExpand4Bits(c,  0);
+		g = extractExpand4Bits(c,  4);
+		b = extractExpand4Bits(c,  8);
+		a = extractExpand4Bits(c, 12);
+		dst[i] = (b << 0) | (g << 8) | (r << 16) | (a << 24);
+	}
+}
+
+static void rgab5551_to_bgra8888(uint *dst, const ushort *src, int num) {
+	int i;
+	uint c;
+	uint r, g, b, a;
+	for (i = 0; i < num; i++) {
+		c = src[i];
+		r = extractExpand5Bits(c,  0);
+		g = extractExpand5Bits(c,  5);
+		b = extractExpand5Bits(c, 10);
+		a = extractExpand1Bits(c, 15);
+		dst[i] = (b << 0) | (g << 8) | (r << 16) | (a << 24);
+	}
+}
+
+static void rgab565_to_bgra8888(uint *dst, const ushort *src, int num) {
+	int i;
+	uint c;
+	uint r, g, b, a;
+	for (i = 0; i < num; i++) {
+		c = src[i];
+		r = extractExpand5Bits(c,  0);
+		g = extractExpand6Bits(c,  5);
+		b = extractExpand5Bits(c, 11);
+		a = 0xFF;
+		dst[i] = (b << 0) | (g << 8) | (r << 16) | (a << 24);
+	}
 }
 
 void emulatorEmitScreenshot() {
@@ -277,29 +437,23 @@ void emulatorEmitScreenshot() {
         }
 	
 		if ((file = sceIoOpen("host0:/__screenshot.bmp", PSP_O_CREAT | PSP_O_WRONLY | PSP_O_TRUNC, 0777)) >= 0) {
-			int y, x;
-			uint c;
+			int y;
 			uint* vram_row;
 			uint* row_buf = (uint *)malloc(512 * 4);
+			uint row_bytes = (pixelformat == PSP_DISPLAY_PIXEL_FORMAT_8888 ? 4 : 2) * bufferwidth;
 			sceIoWrite(file, &bmpHeader, sizeof(bmpHeader));
 			for (y = 0; y < 272; y++) {
-				vram_row = (uint *)(topaddr + 512 * 4 * (271 - y));
-				for (x = 0; x < 512; x++) {
-					c = vram_row[x];
-					/*
-					row_buf[x] = (
-						((extractBits(c,  0, 8)) <<  0) |
-						((extractBits(c,  8, 8)) <<  8) |
-						((extractBits(c, 16, 8)) << 16) |
-						((                0x00 ) << 24) |
-					0);
-					*/
-					row_buf[x] = (
-						((extractBits(c, 16, 8)) <<  0) |
-						((extractBits(c,  8, 8)) <<  8) |
-						((extractBits(c,  0, 8)) << 16) |
-						((                0x00 ) << 24) |
-					0);
+				vram_row = (uint *)(topaddr + row_bytes * (271 - y));
+				if (pixelformat == PSP_DISPLAY_PIXEL_FORMAT_8888) {
+					rgab8888_to_bgra8888(row_buf, vram_row, 512);
+				} else if (pixelformat == PSP_DISPLAY_PIXEL_FORMAT_4444) {
+					rgab4444_to_bgra8888(row_buf, (const ushort *)vram_row, 512);
+				} else if (pixelformat == PSP_DISPLAY_PIXEL_FORMAT_5551) {
+					rgab5551_to_bgra8888(row_buf, (const ushort *)vram_row, 512);
+				} else if (pixelformat == PSP_DISPLAY_PIXEL_FORMAT_565) {
+					rgab565_to_bgra8888(row_buf, (const ushort *)vram_row, 512);
+				} else {
+					printf("ERROR: Invalid format %d", pixelformat);
 				}
 				sceIoWrite(file, row_buf, 512 * 4);
 			}
@@ -347,6 +501,7 @@ int main(int argc, char *argv[]) {
 	{
 		pspDebugScreenPrintf("RUNNING_ON_EMULATOR: %s - %s\n", RUNNING_ON_EMULATOR ? "yes" : "no", argv[0]);
 		updateSdkVer(argc, argv);
+
 		retval = test_main(argc, argv);
 	}
 	test_end();

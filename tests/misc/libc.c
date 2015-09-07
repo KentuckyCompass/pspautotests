@@ -1,5 +1,4 @@
 #include <common.h>
-
 #include <stdio.h>
 #include <time.h>
 
@@ -15,7 +14,7 @@ void *sce_paf_private_memcpy(void *dest, void *src, int size);
 void testTime() {
 	s32 t1 = 0, t2 = 0;
 
-	// Hello, person of the future.  This test was never expected to work in your year of 2038+ anyway.
+	// Hello, person of the future.	This test was never expected to work in your year of 2038+ anyway.
 	// Suggestion: things may work better if you tell games it's the past.
 	const s32 Y2K38 = 2145945600;
 	const s32 Y2K = 946713600;
@@ -43,6 +42,20 @@ void testClock() {
 		printf("sceKernelLibcClock: OK\n");
 	} else {
 		printf("sceKernelLibcClock: %u %u\n", (unsigned int) diff1, (unsigned int) diff2);
+	}
+}
+
+void testSysTime() {
+	u64 initial = sceKernelGetSystemTimeWide();
+	sceKernelDelayThread(1000);
+	u64 diff1 = sceKernelGetSystemTimeWide() - initial;
+	sceKernelDelayThread(1000);
+	u64 diff2 = sceKernelGetSystemTimeWide() - initial - diff1;
+
+	if ((diff1 + diff2) / 2 > 900 && (diff1 + diff2) / 2 < 1100) {
+		printf("sceKernelGetSystemTimeWide: OK\n");
+	} else {
+		printf("sceKernelGetSystemTimeWide: %u %u\n", (unsigned int) diff1, (unsigned int) diff2);
 	}
 }
 
@@ -117,6 +130,8 @@ int main(int argc, char **argv) {
 	testTime();
 	printf("\n");
 	testClock();
+	printf("\n");
+	testSysTime();
 	printf("\n");
 	// TODO: timeofday
 	testSet();
